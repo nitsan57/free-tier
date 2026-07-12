@@ -2,9 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getStripe } from "@/lib/billing";
 
+function isSafeRedirect(url: string): boolean {
+  if (url.startsWith("/") && !url.startsWith("//")) {
+    return true;
+  }
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) return false;
+  try {
+    const target = new URL(url);
+    const origin = new URL(appUrl);
+    return target.protocol === origin.protocol && target.host === origin.host;
+  } catch {
+    return false;
+  }
+}
+
 const CheckoutSchema = z.object({
-  successUrl: z.string().url(),
-  cancelUrl: z.string().url()
+  successUrl: z.string().refine(isSafeRedirect, "Invalid or unsafe redirect URL"),
+  cancelUrl: z.string().refine(isSafeRedirect, "Invalid or unsafe redirect URL")
 });
 
 export async function POST(req: NextRequest) {
