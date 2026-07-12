@@ -1,20 +1,31 @@
 import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
 import {
   createCipheriv,
   createDecipheriv,
   createHash,
-  randomBytes
+  randomBytes,
+  timingSafeEqual
 } from "crypto";
 
 const SESSION_COOKIE = "session";
+const STATE_COOKIE = "oauth_state";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
+const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 60_000;
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+
+export interface SessionUser {
+  id?: string;
+  email?: string;
+}
 
 export interface SessionData {
   googleAccessToken: string;
   googleRefreshToken?: string;
   expiresAt: number;
+  user?: SessionUser;
 }
 
 function getEncryptionKey(): Buffer {
@@ -54,6 +65,15 @@ export function decryptToken(payload: string): string {
   return decrypted.toString("utf8");
 }
 
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/"
+  };
+}
+
 export function setSession(data: SessionData): void {
   const stored: SessionData = {
     ...data,
@@ -62,10 +82,8 @@ export function setSession(data: SessionData): void {
       : undefined
   };
   cookies().set(SESSION_COOKIE, JSON.stringify(stored), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/"
+    ...cookieOptions(),
+    maxAge: COOKIE_MAX_AGE_SECONDS
   });
 }
 
@@ -89,6 +107,36 @@ export function getSession(): SessionData | null {
 
 export function clearSession(): void {
   cookies().delete(SESSION_COOKIE);
+}
+
+export function generateOAuthState(): string {
+  return randomBytes(32).toString("hex");
+}
+
+export function setOAuthState(res: NextResponse, state: string): void {
+  res.cookies.set(STATE_COOKIE, state, {
+    ...cookieOptions(),
+    maxAge: 600
+  });
+}
+
+export function getOAuthState(): string | null {
+  return cookies().get(STATE_COOKIE)?.value ?? null;
+}
+
+export function clearOAuthState(): void {
+  cookies().delete(STATE_COOKIE);
+}
+
+export function validateOAuthState(
+  provided: string | null,
+  expected: string | null
+): boolean {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -158,7 +206,7 @@ export async function getValidAccessToken(
   }
 
   if (!session.googleRefreshToken) {
-    return session.googleAccessToken || null;
+    return null;
   }
 
   const refreshed = await refreshGoogleTokens(session.googleRefreshToken);

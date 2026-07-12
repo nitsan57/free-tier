@@ -1,68 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setSession } from "@/lib/session";
+import {
+  createOAuthClient,
+  exchangeCodeForTokens,
+  fetchUserInfo
+} from "@/lib/google/oauth";
+import {
+  clearOAuthState,
+  getOAuthState,
+  setSession,
+  validateOAuthState
+} from "@/lib/session";
 
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
+function redirectWithError(req: NextRequest, error: string): NextResponse {
+  return NextResponse.redirect(
+    new URL(`/?auth_error=${encodeURIComponent(error)}`, req.url)
+  );
+}
 
 export async function GET(req: NextRequest) {
   const error = req.nextUrl.searchParams.get("error");
   if (error) {
-    return NextResponse.redirect(
-      new URL(`/?auth_error=${encodeURIComponent(error)}`, req.url)
-    );
+    return redirectWithError(req, error);
   }
 
   const code = req.nextUrl.searchParams.get("code");
+  const state = req.nextUrl.searchParams.get("state");
+  const expectedState = getOAuthState();
+  clearOAuthState();
+
   if (!code) {
-    return NextResponse.redirect(
-      new URL("/?auth_error=missing_code", req.url)
-    );
+    return redirectWithError(req, "missing_code");
   }
 
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
-
-  if (!clientId || !clientSecret || !redirectUri) {
-    return NextResponse.redirect(
-      new URL("/?auth_error=oauth_not_configured", req.url)
-    );
+  if (!validateOAuthState(state, expectedState)) {
+    return redirectWithError(req, "invalid_state");
   }
 
-  const tokenRes = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: clientId,
-      client_secret: clientSecret,
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code"
-    })
-  });
+  const client = createOAuthClient();
 
-  if (!tokenRes.ok) {
-    return NextResponse.redirect(
-      new URL("/?auth_error=token_exchange_failed", req.url)
-    );
+  let tokens;
+  try {
+    tokens = await exchangeCodeForTokens(client, code);
+  } catch {
+    return redirectWithError(req, "token_exchange_failed");
   }
 
-  const tokens = (await tokenRes.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
+  if (!tokens.accessToken) {
+    return redirectWithError(req, "no_access_token");
+  }
 
-  if (!tokens.access_token) {
-    return NextResponse.redirect(
-      new URL("/?auth_error=no_access_token", req.url)
-    );
+  let user: { id?: string; email?: string } | undefined;
+  try {
+    user = await fetchUserInfo(tokens.accessToken);
+  } catch {
+    user = undefined;
   }
 
   setSession({
-    googleAccessToken: tokens.access_token,
-    googleRefreshToken: tokens.refresh_token,
-    expiresAt:
-      Date.now() + (tokens.expires_in ?? 3600) * 1000
+    googleAccessToken: tokens.accessToken,
+    googleRefreshToken: tokens.refreshToken,
+    expiresAt: tokens.expiryDate,
+    user
   });
 
   return NextResponse.redirect(new URL("/clean", req.url));
