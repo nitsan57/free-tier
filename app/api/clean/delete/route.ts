@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createHash } from "crypto";
-import { getSession, SessionData } from "@/lib/session";
+import { getSession, getValidAccessToken, SessionData } from "@/lib/session";
 import { PhotosClient } from "@/lib/google/photos";
 import { FREE_MONTHLY_DELETION_LIMIT } from "@/lib/billing";
 import {
@@ -61,7 +61,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const client = new PhotosClient(session.googleAccessToken);
+  const client = new PhotosClient(async (force) => {
+    const token = await getValidAccessToken(force);
+    if (!token) throw new Error("No valid Google access token");
+    return token;
+  });
   try {
     await client.batchDelete(ids);
   } catch (e) {
