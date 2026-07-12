@@ -90,3 +90,83 @@ export function getSession(): SessionData | null {
 export function clearSession(): void {
   cookies().delete(SESSION_COOKIE);
 }
+
+export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+const EXPIRY_BUFFER_MS = 60_000;
+
+export interface GoogleTokens {
+  accessToken: string;
+  expiresAt: number;
+  refreshToken?: string;
+}
+
+export async function refreshGoogleTokens(
+  refreshToken: string
+): Promise<GoogleTokens> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set; cannot refresh token"
+    );
+  }
+
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    })
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Google token refresh failed (${res.status}): ${detail}`);
+  }
+
+  const data = (await res.json()) as {
+    access_token?: string;
+    expires_in?: number;
+    refresh_token?: string;
+  };
+
+  if (!data.access_token) {
+    throw new Error("Google token refresh returned no access_token");
+  }
+
+  return {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+    refreshToken: data.refresh_token ?? undefined
+  };
+}
+
+export async function getValidAccessToken(
+  forceRefresh = false
+): Promise<string | null> {
+  const session = getSession();
+  if (!session) return null;
+
+  const notExpired = session.expiresAt > Date.now() + EXPIRY_BUFFER_MS;
+  if (!forceRefresh && notExpired) {
+    return session.googleAccessToken;
+  }
+
+  if (!session.googleRefreshToken) {
+    return session.googleAccessToken || null;
+  }
+
+  const refreshed = await refreshGoogleTokens(session.googleRefreshToken);
+  setSession({
+    googleAccessToken: refreshed.accessToken,
+    googleRefreshToken: refreshed.refreshToken ?? session.googleRefreshToken,
+    expiresAt: refreshed.expiresAt
+  });
+
+  return refreshed.accessToken;
+}
