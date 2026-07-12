@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
     environment: "node",
+    globals: true,
     include: ["lib/**/*.test.ts"]
   }
 });

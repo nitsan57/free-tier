@@ -7,7 +7,8 @@ import {
 import {
   clearOAuthState,
   getOAuthState,
-  setSession
+  setSession,
+  validateOAuthState
 } from "@/lib/session";
 
 function redirectWithError(req: NextRequest, error: string): NextResponse {
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
     return redirectWithError(req, "missing_code");
   }
 
-  if (!state || !expectedState || state !== expectedState) {
+  if (!validateOAuthState(state, expectedState)) {
     return redirectWithError(req, "invalid_state");
   }
 

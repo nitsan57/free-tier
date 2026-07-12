@@ -4,7 +4,8 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
-  randomBytes
+  randomBytes,
+  timingSafeEqual
 } from "crypto";
 
 const SESSION_COOKIE = "session";
@@ -127,6 +128,17 @@ export function clearOAuthState(): void {
   cookies().delete(STATE_COOKIE);
 }
 
+export function validateOAuthState(
+  provided: string | null,
+  expected: string | null
+): boolean {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const EXPIRY_BUFFER_MS = 60_000;
@@ -194,7 +206,7 @@ export async function getValidAccessToken(
   }
 
   if (!session.googleRefreshToken) {
-    return session.googleAccessToken || null;
+    return null;
   }
 
   const refreshed = await refreshGoogleTokens(session.googleRefreshToken);

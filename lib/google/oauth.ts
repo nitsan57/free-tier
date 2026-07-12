@@ -2,9 +2,9 @@ import { google } from "googleapis";
 import type { OAuth2Client } from "google-auth-library";
 
 export const OAUTH_SCOPES = [
-  "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
+  "https://www.googleapis.com/auth/photoslibrary.readonly",
   "https://www.googleapis.com/auth/photoslibrary.appendonly",
-  "https://www.googleapis.com/auth/photoslibrary.edit.appcreateddata",
+  "https://www.googleapis.com/auth/photoslibrary.edit",
   "openid",
   "email",
   "profile"
@@ -78,10 +78,17 @@ export interface GoogleUserInfo {
   email?: string;
 }
 
+const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
+
 export async function fetchUserInfo(accessToken: string): Promise<GoogleUserInfo> {
-  const client = createOAuthClient();
-  const info = await client.getTokenInfo(accessToken);
-  return { id: info.sub, email: info.email };
+  const res = await fetch(USERINFO_URL, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch user info (${res.status})`);
+  }
+  const data = (await res.json()) as { sub?: string; id?: string; email?: string };
+  return { id: data.sub ?? data.id, email: data.email };
 }
 
 export async function refreshAccessToken(refreshToken: string): Promise<GoogleTokens> {
